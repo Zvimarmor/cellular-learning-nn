@@ -56,7 +56,14 @@ to start there outside a SLURM job.
 ```bash
 # once, on the login node
 git clone <repo> && cd cellular-learning-nn
-python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt   # or conda: edit ENV_ACTIVATE
+PY=/ems/elsc-labs/apps/python/3.11.13               # `module load python/3.11.13`; system python3 is 3.9
+$PY/bin/python3 -m venv .venv && source .venv/bin/activate   # or conda: edit ENV_ACTIVATE
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128   # sm_75..sm_120 (no V100)
+pip install numpy wandb pytest patchelf
+# The module's python has no RPATH to its libpython3.11.so: give the venv its own copy that does,
+# so .venv/bin/* runs without `module load` (cluster.env also sets LD_LIBRARY_PATH for jobs).
+(cd .venv/bin && rm python python3 python3.11 && cp $PY/bin/python3.11 . && ./patchelf --set-rpath $PY/lib python3.11 \
+  && ln -s python3.11 python3 && ln -s python3.11 python)
 ./slurm/check_cluster.sh          # read-only: partitions, GPU type names, your accounts
 $EDITOR slurm/cluster.env         # PARTITION, GPU_GRES, ACCOUNT, ENV_ACTIVATE, WANDB_MODE
 wandb login
