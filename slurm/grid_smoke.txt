@@ -1,0 +1,5 @@
+# ~10-minute cluster check: one short job per code path. SEEDS="0" GRID=slurm/grid_smoke.txt ./slurm/launch_sweep.sh
+--dataset mnist --model mlp --epochs 1 --max-steps 100 --method backprop --run-name smoke-bp-mlp --no-auto-resume
+--dataset cifar10 --model resnet18 --epochs 1 --max-steps 100 --method backprop --optimizer sgd --lr 0.05 --run-name smoke-bp-resnet18 --no-auto-resume
+--dataset cifar10 --model resnet18 --epochs 1 --max-steps 100 --method three_factor --optimizer adam --lr 1e-4 --micro-batch-size 64 --perturb-mode all --run-name smoke-3f-all --no-auto-resume
+--dataset cifar10 --model resnet18 --epochs 1 --max-steps 100 --method three_factor --optimizer adam --lr 1e-4 --micro-batch-size 64 --perturb-mode layerwise,topk,blockwise_reward --aux-head learned --run-name smoke-3f-combo --no-auto-resume

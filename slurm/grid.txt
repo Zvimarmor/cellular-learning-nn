@@ -1,0 +1,33 @@
+# One experiment per line (train.py arguments); launch_sweep.sh crosses it with SEEDS.
+# LRs come from 1-epoch CIFAR-10 runs (Adam, best of two per mode); MNIST three-factor
+# LRs for the new modes reuse the 'all' value and are untested.
+
+# ---- MNIST / MLP (266 perturbed units)
+--dataset mnist --model mlp --epochs 20 --method backprop
+--dataset mnist --model mlp --epochs 20 --method three_factor --perturb-mode all --lr 1e-2
+--dataset mnist --model mlp --epochs 20 --method three_factor --perturb-mode layerwise --lr 1e-2
+--dataset mnist --model mlp --epochs 20 --method three_factor --perturb-mode topk --lr 1e-2
+--dataset mnist --model mlp --epochs 20 --method three_factor --perturb-mode blockwise_reward --lr 1e-2
+
+# ---- CIFAR-10 / ShallowCNN (~50k units)
+--dataset cifar10 --model cnn --epochs 50 --augment --method backprop
+--dataset cifar10 --model cnn --epochs 50 --augment --method three_factor --optimizer adam --lr 3e-4 --perturb-mode all
+--dataset cifar10 --model cnn --epochs 50 --augment --method three_factor --optimizer adam --lr 3e-4 --perturb-mode layerwise
+--dataset cifar10 --model cnn --epochs 50 --augment --method three_factor --optimizer adam --lr 3e-4 --perturb-mode topk
+--dataset cifar10 --model cnn --epochs 50 --augment --method three_factor --optimizer adam --lr 1e-4 --perturb-mode blockwise_reward
+--dataset cifar10 --model cnn --epochs 50 --augment --method three_factor --optimizer adam --lr 3e-4 --perturb-mode topk,blockwise_reward
+--dataset cifar10 --model cnn --epochs 50 --augment --method three_factor --optimizer adam --lr 3e-4 --perturb-mode layerwise,topk
+
+# ---- CIFAR-10 / ResNet-10, width 32 (small model)
+--dataset cifar10 --model resnet10 --epochs 50 --augment --method backprop --optimizer sgd --lr 0.05 --weight-decay 5e-4
+--dataset cifar10 --model resnet10 --epochs 50 --augment --method three_factor --optimizer adam --lr 1e-4 --perturb-mode all
+--dataset cifar10 --model resnet10 --epochs 50 --augment --method three_factor --optimizer adam --lr 1e-4 --perturb-mode layerwise
+--dataset cifar10 --model resnet10 --epochs 50 --augment --method three_factor --optimizer adam --lr 1e-4 --perturb-mode layerwise,topk,blockwise_reward
+
+# ---- CIFAR-10 / ResNet-18, width 64 (~0.5M units)
+--dataset cifar10 --model resnet18 --epochs 50 --augment --method backprop --optimizer sgd --lr 0.05 --weight-decay 5e-4
+--dataset cifar10 --model resnet18 --epochs 50 --augment --method three_factor --optimizer adam --lr 1e-5 --perturb-mode all --micro-batch-size 64
+--dataset cifar10 --model resnet18 --epochs 50 --augment --method three_factor --optimizer adam --lr 1e-4 --perturb-mode layerwise --micro-batch-size 64
+--dataset cifar10 --model resnet18 --epochs 50 --augment --method three_factor --optimizer adam --lr 1e-4 --perturb-mode topk --micro-batch-size 64
+--dataset cifar10 --model resnet18 --epochs 50 --augment --method three_factor --optimizer adam --lr 1e-5 --perturb-mode blockwise_reward --micro-batch-size 64
+--dataset cifar10 --model resnet18 --epochs 50 --augment --method three_factor --optimizer adam --lr 1e-4 --perturb-mode layerwise,topk --micro-batch-size 64
