@@ -234,3 +234,40 @@ def test_adaptive_schedule_visits_all_then_prefers_high_error_groups():
     order_s = sorted(range(len(p)), key=lambda g: trainer.group_score[g])
     order_p = sorted(range(len(p)), key=lambda g: p[g])
     assert order_s == order_p
+
+
+def test_estimate_unbiased_with_per_layer_sigma():
+    """Soft schedule: layers carry different sigma; the per-layer 1/sigma_m^2 scale keeps
+    each layer's estimate aligned with (and of the same size as) its true gradient."""
+    torch.manual_seed(0)
+    model = build_model("mlp", (1, 4, 4), 10, SIGMA, width=16)
+    trainer, _ = make_trainer(model, "all")
+    x, y = torch.randn(16, 1, 4, 4), torch.randint(0, 10, (16,))
+    F.cross_entropy(model(x), y).backward()
+    layers = model.perturbed_layers()
+    true = {m: m.weight.grad.clone() for m in layers}
+    layers[0].sigma, layers[1].sigma = SIGMA * 0.5, SIGMA * 2.0
+    trainer.estimate(*repeated(x, y, 2048), layers)
+    for m in layers:
+        assert cos(m.weight_est, true[m]) > 0.5
+        assert abs(proj(m.weight_est, true[m]) - 1) < 0.2
+
+
+def test_soft_schedule_probes_and_scales_noise():
+    torch.manual_seed(0)
+    model = build_model("cnn", (3, 16, 16), 10, SIGMA, width=8)
+    trainer, _ = make_trainer(model, "layerwise", "--layer-schedule", "soft", "--probe-every", "2",
+                              "--adaptive-score", "per_unit", "--optimizer", "adam", "--lr", "1e-4")
+    x, y = torch.randn(32, 3, 16, 16), torch.randint(0, 10, (32,))
+    for _ in range(16):
+        trainer.step(x, y)
+    assert all(s is not None for s in trainer.group_score)   # every group probed
+    active, g = trainer.select_active()                        # t=16: probe step
+    assert g == 0 and active == trainer.groups[0]
+    trainer.t += 1
+    active, g = trainer.select_active()                        # soft step: everything
+    assert g == -1 and active == model.perturbed_layers()
+    G, p = len(trainer.groups), trainer.schedule_probs()
+    power = sum(grp[0].sigma ** 2 for grp in trainer.groups)
+    assert abs(power - G * SIGMA ** 2) < 1e-9
+    assert [grp[0].sigma for grp in trainer.groups] == pytest.approx([SIGMA * math.sqrt(G * q) for q in p])

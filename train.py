@@ -188,6 +188,8 @@ class ThreeFactorTrainer:
         """Returns (perturbed main-network layers, group index or -1)."""
         if not self.layerwise:
             return self.model.perturbed_layers(), -1
+        if self.args.layer_schedule == "soft":
+            return self.select_soft()
         if self.args.layer_schedule == "cycle":
             g = self.t % len(self.groups)
         elif self.args.layer_schedule == "adaptive":
@@ -195,6 +197,25 @@ class ThreeFactorTrainer:
         else:
             g = self.rng.randrange(len(self.groups))
         return self.groups[g], g
+
+    def select_soft(self):
+        """Soft adaptive schedule: every group is perturbed every step, with noise
+        sigma_g = sigma * sqrt(G p_g) (p_g from schedule_probs), so the total noise power
+        sum_g sigma_g^2 equals G sigma^2 and goes preferentially to high-error groups.
+        Scores cannot be read off a reward that mixes all groups, so every
+        --probe-every steps one group (round-robin) is perturbed alone at sigma and
+        rescored; that probe step is applied like a normal layer-wise step.
+        """
+        G, sigma = len(self.groups), self.args.sigma
+        if self.t % self.args.probe_every == 0:
+            g = (self.t // self.args.probe_every) % G
+            for m in self.groups[g]:
+                m.sigma = sigma
+            return self.groups[g], g
+        for layers, p in zip(self.groups, self.schedule_probs()):
+            for m in layers:
+                m.sigma = sigma * math.sqrt(G * p)
+        return self.model.perturbed_layers(), -1
 
     def schedule_probs(self) -> list[float]:
         """Activity-driven scheduling: perturb a region with probability proportional to
@@ -288,7 +309,6 @@ class ThreeFactorTrainer:
         a, model = self.args, self.model
         B = x.size(0)
         mb = a.micro_batch_size or B
-        scale = 1.0 / (B * a.sigma ** 2)
         estimated: dict = {}
 
         loss_sum, correct, r_abs, r_sq, units = 0.0, 0, 0.0, 0.0, 0.0
@@ -305,7 +325,8 @@ class ThreeFactorTrainer:
                 # Effective dimensionality of the perturbation: noisy units per sample.
                 units = sum((m._xi != 0).sum().item() for m in rewards) / xb.size(0)
             for m, r in rewards.items():
-                m.accumulate_estimate(r, scale)
+                # Per-layer 1/sigma_m^2 keeps the estimate unbiased under a soft schedule.
+                m.accumulate_estimate(r, 1.0 / (B * m.sigma ** 2))
             model.clear_traces()
 
             loss_sum += loss.sum().item()
@@ -331,6 +352,10 @@ class ThreeFactorTrainer:
         if group >= 0:
             logs["tf/active_group"] = group
             score = math.sqrt(logs["tf/reward_sq"])
+            if self.args.adaptive_score == "per_unit":
+                # sqrt(E[R^2] / units) = sigma * RMS of dL/dz over the group's units: big
+                # blocks no longer win just by having more units.
+                score /= math.sqrt(max(logs["tf/perturbed_units"], 1.0))
             old = self.group_score[group]
             d = self.args.adaptive_decay
             self.group_score[group] = score if old is None else d * old + (1 - d) * score
@@ -503,9 +528,14 @@ def parse_args(argv=None):
                     help="per_sample: R_b per example; batch: one scalar R for the whole batch")
     tf.add_argument("--perturb-mode", default="all",
                     help=f"comma-separated subset of {', '.join(PERTURB_MODES)} (e.g. layerwise,topk)")
-    tf.add_argument("--layer-schedule", choices=["cycle", "random", "adaptive"], default="cycle",
+    tf.add_argument("--layer-schedule", choices=["cycle", "random", "adaptive", "soft"], default="cycle",
                     help="layerwise: round-robin, uniformly random, or adaptive (probability "
-                         "proportional to each group's recent local error sqrt(E[R^2]))")
+                         "proportional to each group's recent local error sqrt(E[R^2])), or soft "
+                         "(all groups every step, noise scaled by the adaptive probabilities)")
+    tf.add_argument("--adaptive-score", choices=["total", "per_unit"], default="total",
+                    help="adaptive/soft: group score sqrt(E[R^2]) or sqrt(E[R^2] / perturbed units)")
+    tf.add_argument("--probe-every", type=int, default=10,
+                    help="soft schedule: every k-th step perturbs one group alone to rescore it")
     tf.add_argument("--adaptive-eps", type=float, default=0.2,
                     help="adaptive schedule: weight of the uniform floor in the group probabilities")
     tf.add_argument("--adaptive-decay", type=float, default=0.9,

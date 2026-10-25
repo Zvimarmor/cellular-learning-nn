@@ -1,0 +1,9 @@
+# ResNet-18 / CIFAR-10, 30 epochs: two follow-ups to adaptive scheduling (H1), same settings as
+# grid_resnet_bio.txt. Per-unit score sqrt(E[R^2]/units), and the soft schedule (all groups every
+# step, sigma_g ~ sqrt(p_g), one probe step in 10 to rescore), each alone and with top-k.
+# Targets: layer-wise adaptive 21.0, top-k alone 24.2 (30 epochs).
+#   GRID=slurm/grid_resnet_bio2.txt SEEDS="0 1 2" TIME_LIMIT=02:00:00 ./slurm/launch_sweep.sh
+--dataset cifar10 --model resnet18 --epochs 30 --augment --method three_factor --optimizer adam --lr 1e-4 --micro-batch-size 64 --perturb-mode layerwise --layer-schedule adaptive --adaptive-score per_unit --tag adaptive-unit-bio30
+--dataset cifar10 --model resnet18 --epochs 30 --augment --method three_factor --optimizer adam --lr 1e-4 --micro-batch-size 64 --perturb-mode layerwise,topk --layer-schedule adaptive --adaptive-score per_unit --tag adaptive-unit-bio30
+--dataset cifar10 --model resnet18 --epochs 30 --augment --method three_factor --optimizer adam --lr 1e-4 --micro-batch-size 64 --perturb-mode layerwise --layer-schedule soft --adaptive-score per_unit --tag soft-unit-bio30
+--dataset cifar10 --model resnet18 --epochs 30 --augment --method three_factor --optimizer adam --lr 1e-4 --micro-batch-size 64 --perturb-mode layerwise,topk --layer-schedule soft --adaptive-score per_unit --tag soft-unit-bio30
