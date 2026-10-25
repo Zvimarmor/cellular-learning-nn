@@ -105,6 +105,51 @@ averaged over the run (every 200 steps).
   to ~0.018. With round-robin, the run-averaged alignment is indistinguishable from 0.
 - **It does not close the gap to top-k alone**, still the best ResNet-18 rule (24.2%,
   25.3% at 50 epochs). Perturbing one group per step costs more steps of progress than
-  the better-aimed probe gives back. Next to try: the per-unit score
-  √(E[R²] / units), and a soft schedule that perturbs every group each step with
-  σ_g scaled by its score instead of picking one group.
+  the better-aimed probe gives back.
+
+**30 epochs, ResNet-18, two H1 follow-ups (array 64312097, `slurm/grid_resnet_bio2.txt`),**
+same settings:
+
+| config | val acc % | loss AUC | `align_upd` |
+|---|---|---|---|
+| layer-wise, adaptive, per-unit score | 21.4 ±1.8 | 2.179 | **0.041** |
+| layer-wise + top-k, adaptive, per-unit score | **23.6 ±1.1** | 2.161 | 0.022 |
+| soft schedule, per-unit score | 17.5 ±0.7 | 2.271 | 0.001 |
+| soft schedule + top-k, per-unit score | 22.5 ±1.8 | 2.177 | 0.001 |
+| *top-k alone (above)* | *24.2 ±2.2* | *2.158* | *0.002* |
+
+- **Per-unit score** (`--adaptive-score per_unit`, score = √(E[R²] / perturbed units)):
+  kept as an option. It doubles the applied-step alignment of layer-wise adaptive
+  (0.018 → 0.041) and lowers loss AUC; with top-k it gains +3.5 points over the
+  total-score version (20.1 → 23.6, non-overlapping seeds). It only *ties* top-k alone.
+- **Soft schedule** (all groups every step, σ_g = σ·√(G p_g), one probe step in 10 to
+  rescore): reverted (code at `29aec52`). Perturbing everything brings back the
+  dimensionality problem: alignment falls to the `all`-mode level, and scaling σ_g
+  does not help because the estimator's variance depends on the total perturbed
+  dimension, not on how the noise power is split.
+
+## Conclusions (research paused here)
+
+1. **The limit is the number of bits per step, not the learning rule's details.**
+   Node perturbation gets one scalar reward per sample for a probe in a space of
+   10⁴–10⁶ units, so the gradient SNR goes like √(batch / perturbed units). Everything
+   that worked made that ratio better (top-k, layer-wise, local rewards, adaptive
+   scheduling); everything that only reshaped, filtered, gated, averaged or
+   re-applied the same probe (H2–H7, soft schedule) gave nothing or hurt.
+2. **Adaptive, error-driven scheduling is the one bio-inspired mechanism that holds up.**
+   Using the reward's own magnitude as a free local readout of where the error is
+   improves alignment 10–30× and accuracy on the CNN (+5–6 points) and on ResNet-18
+   layer-wise (+1.3 points, +3.5 with the per-unit score on top of top-k).
+3. **It doesn't beat the simplest strong baseline on ResNet-18.** Top-k alone (~24–25%)
+   is still best: it cuts dimensionality ~20× while still updating every layer every
+   step. Layer-wise schemes concentrate the signal but update one block in ~10 per
+   step, which roughly cancels the gain. The gap to backprop (87.5%) is unchanged in
+   kind: no variant here is within 60 points of it on ResNet-18.
+4. **Short runs mislead.** One-epoch ResNet-18 rankings did not predict the 30–50
+   epoch rankings (e.g. adaptive looked neutral at 1 epoch and helps at 30).
+5. **If this is resumed**, the promising directions are those that add information
+   per step rather than reshape it: more independent noise draws per sample
+   (antithetic ±ξ pairs, several probes per forward), lower-dimensional probes
+   (perturbing channels or low-rank directions instead of every unit), and richer
+   local error signals (learned aux heads / per-block targets) combined with top-k
+   and per-unit adaptive scheduling.
