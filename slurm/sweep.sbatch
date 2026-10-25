@@ -2,8 +2,9 @@
 # Job array over experiments x seeds. Submit with slurm/launch_sweep.sh, which sets
 # --array from the grid size. Task i runs grid line (i mod N) with seed SEEDS[i div N].
 #SBATCH --job-name=3f-sweep
-#SBATCH --partition=ss.gpu
+#SBATCH --partition=gpu.q
 #SBATCH --gres=gpu:1
+#SBATCH --constraint=RTX2080Ti|A100|rtxpro
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=24:00:00

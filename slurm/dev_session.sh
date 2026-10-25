@@ -6,4 +6,4 @@ set -euo pipefail
 export REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$REPO_DIR/slurm/cluster.env"
 exec tmux new-session -A -s 3f-dev \
-  "srun --partition=$PARTITION --gres=$GPU_GRES --cpus-per-task=$CPUS --mem=$MEM --time=${DEV_TIME:-02:00:00} --pty bash -l"
+  "srun --partition=$PARTITION --gres=$GPU_GRES --constraint='$CONSTRAINT' --cpus-per-task=$CPUS --mem=$MEM --time=${DEV_TIME:-02:00:00} --pty bash -l"

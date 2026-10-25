@@ -5,8 +5,9 @@
 # submitting through launch_sweep.sh, or override on the command line:
 #   sbatch --partition=gpu.q --gres=gpu:a100:1 slurm/submit_experiments.sbatch ...
 #SBATCH --job-name=3f
-#SBATCH --partition=ss.gpu
+#SBATCH --partition=gpu.q
 #SBATCH --gres=gpu:1
+#SBATCH --constraint=RTX2080Ti|A100|rtxpro
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G
 #SBATCH --time=24:00:00

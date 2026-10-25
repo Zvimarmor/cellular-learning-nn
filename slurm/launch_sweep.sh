@@ -28,12 +28,12 @@ fi
 for need in "$DATA_DIR/MNIST/raw/train-images-idx3-ubyte" "$DATA_DIR/cifar-10-batches-py/data_batch_1"; do
   [[ -e "$need" ]] || { echo "missing $need -- run ./slurm/prefetch_data.sh first" >&2; exit 1; }
 done
-if [[ "$WANDB_MODE" == online ]] && ! grep -q "api.wandb.ai" ~/.netrc 2>/dev/null && [[ -z "${WANDB_API_KEY:-}" ]]; then
+if [[ "$WANDB_MODE" == online ]] && ! grep -qE "api\.wandb\.ai|api\.forge\.coreweave\.com" ~/.netrc 2>/dev/null && [[ -z "${WANDB_API_KEY:-}" ]]; then
   echo "warning: no wandb credentials found; run 'wandb login' once on the login node" >&2
 fi
 
 mkdir -p logs "$OUT_DIR"
-args=(--partition="$PARTITION" --gres="$GPU_GRES" --cpus-per-task="$CPUS" --mem="$MEM"
+args=(--partition="$PARTITION" --gres="$GPU_GRES" --constraint="$CONSTRAINT" --cpus-per-task="$CPUS" --mem="$MEM"
       --time="$TIME_LIMIT" --array="0-$((n_tasks - 1))%${MAX_PARALLEL}"
       --export="ALL,REPO_DIR=$REPO_DIR,GRID=$GRID,SEEDS=$SEEDS")
 [[ -z "$ACCOUNT" ]] || args+=(--account="$ACCOUNT")
