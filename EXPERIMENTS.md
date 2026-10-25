@@ -105,5 +105,6 @@ averaged over the run (every 200 steps).
   to ~0.018. With round-robin, the run-averaged alignment is indistinguishable from 0.
 - **It does not close the gap to top-k alone**, still the best ResNet-18 rule (24.2%,
   25.3% at 50 epochs). Perturbing one group per step costs more steps of progress than
-  the better-aimed probe gives back. The next candidate is adaptive scheduling over
-  top-k-only perturbation with the per-unit score √(E[R²] / units).
+  the better-aimed probe gives back. Next to try: the per-unit score
+  √(E[R²] / units), and a soft schedule that perturbs every group each step with
+  σ_g scaled by its score instead of picking one group.
