@@ -87,5 +87,23 @@ units). Mechanisms help only if they put that probe where the signal is.
 One-epoch rankings did not predict 50-epoch rankings on ResNet-18: there, top-k
 alone wins.
 
-**30 epochs, ResNet-18, mechanism #1 (array 64257362):** results pending; see
-`slurm/grid_resnet_bio.txt`.
+**30 epochs, ResNet-18, mechanism #1 (array 64257362, `slurm/grid_resnet_bio.txt`):**
+Adam 1e-4, micro-batch 64, `--augment`, 3 seeds (± = half the range), `align_upd`
+averaged over the run (every 200 steps).
+
+| config | val acc % | loss AUC | `align_upd` |
+|---|---|---|---|
+| layer-wise, round-robin | 19.7 ±0.8 | 2.234 | −0.0005 |
+| layer-wise, adaptive | **21.0 ±0.2** | 2.222 | **0.018** |
+| layer-wise + top-k, round-robin | 18.8 ±0.8 | 2.228 | −0.0005 |
+| layer-wise + top-k, adaptive | **20.1 ±0.6** | 2.204 | **0.017** |
+| top-k (no schedule) | **24.2 ±2.2** | **2.158** | 0.002 |
+
+- **Adaptive scheduling helps on ResNet-18 too** once runs are long enough: +1.3
+  points in both settings (seed ranges don't overlap for layer-wise, and touch for
+  layer-wise + top-k), lower loss AUC, and the applied step's alignment goes from zero
+  to ~0.018. With round-robin, the run-averaged alignment is indistinguishable from 0.
+- **It does not close the gap to top-k alone**, still the best ResNet-18 rule (24.2%,
+  25.3% at 50 epochs). Perturbing one group per step costs more steps of progress than
+  the better-aimed probe gives back. The next candidate is adaptive scheduling over
+  top-k-only perturbation with the per-unit score √(E[R²] / units).
