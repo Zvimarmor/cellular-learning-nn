@@ -215,3 +215,22 @@ def test_all_modes_step_on_resnet(modes):
         logs = trainer.step(x, y, measure_alignment=True)
     assert math.isfinite(logs["train/loss"]) and math.isfinite(logs["align/total"])
     assert logs["tf/perturbed_units"] > 0
+
+
+# ----------------------------------------------------------------------------- mechanisms
+
+def test_adaptive_schedule_visits_all_then_prefers_high_error_groups():
+    torch.manual_seed(0)
+    model = build_model("cnn", (3, 16, 16), 10, SIGMA, width=8)
+    trainer, _ = make_trainer(model, "layerwise", "--layer-schedule", "adaptive", "--optimizer", "adam",
+                              "--lr", "1e-4", "--adaptive-eps", "0.1")
+    x, y = torch.randn(32, 3, 16, 16), torch.randint(0, 10, (32,))
+    for _ in range(40):
+        trainer.step(x, y)
+    assert all(s is not None for s in trainer.group_score)
+    p = trainer.schedule_probs()
+    assert abs(sum(p) - 1) < 1e-6 and min(p) >= 0.1 / len(p) - 1e-9
+    # higher error score -> higher probability
+    order_s = sorted(range(len(p)), key=lambda g: trainer.group_score[g])
+    order_p = sorted(range(len(p)), key=lambda g: p[g])
+    assert order_s == order_p

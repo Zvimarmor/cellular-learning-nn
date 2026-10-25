@@ -20,6 +20,7 @@ Run ``python train.py -h`` for all options.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import random
@@ -44,6 +45,7 @@ except ImportError:  # allow running without wandb installed
     wandb = None
 
 PERTURB_MODES = ("all", "layerwise", "topk", "blockwise_reward")
+ALIGN_KEYS = ("align/total", "align/full", "align_update/full")
 
 
 # --------------------------------------------------------------------------- utils
@@ -168,13 +170,18 @@ class ThreeFactorTrainer:
         self.loss_ema: float | None = None   # moving-average baseline L_bar
         self.t = 0                           # step counter (round-robin schedule)
         self.rng = random.Random(args.seed)
+        # Adaptive schedule: running "local error" per group, EMA of sqrt(E[R^2]) measured
+        # while that group was perturbed. None = not visited yet.
+        self.group_score: list[float | None] = [None] * len(self.groups)
 
     def state_dict(self):
-        return {"loss_ema": self.loss_ema, "t": self.t, "rng": self.rng.getstate()}
+        return {"loss_ema": self.loss_ema, "t": self.t, "rng": self.rng.getstate(),
+                "group_score": self.group_score}
 
     def load_state_dict(self, state):
         self.loss_ema, self.t = state["loss_ema"], state["t"]
         self.rng.setstate(state["rng"])
+        self.group_score = state.get("group_score", self.group_score)
 
     # -- which layers are perturbed this step ---------------------------------
     def select_active(self):
@@ -183,9 +190,27 @@ class ThreeFactorTrainer:
             return self.model.perturbed_layers(), -1
         if self.args.layer_schedule == "cycle":
             g = self.t % len(self.groups)
+        elif self.args.layer_schedule == "adaptive":
+            g = self.rng.choices(range(len(self.groups)), weights=self.schedule_probs())[0]
         else:
             g = self.rng.randrange(len(self.groups))
         return self.groups[g], g
+
+    def schedule_probs(self) -> list[float]:
+        """Activity-driven scheduling: perturb a region with probability proportional to
+        its recent local error, mixed with a uniform floor.
+
+        When only group g is perturbed, R ~= xi . dL/dz_g, so E[R^2] = sigma^2 ||dL/dz_g||^2:
+        the reward magnitude while a region is perturbed measures that region's error
+        signal at no extra cost. Unvisited groups get the current maximum (optimism),
+        so each group is tried at least once early on.
+        """
+        known = [s for s in self.group_score if s is not None]
+        top = max(known) if known else 1.0
+        scores = [top if s is None else s for s in self.group_score]
+        total = sum(scores) or 1.0
+        eps, n = self.args.adaptive_eps, len(scores)
+        return [(1 - eps) * s / total + eps / n for s in scores]
 
     # -- rewards ----------------------------------------------------------------
     def _finalize_reward(self, r):
@@ -266,7 +291,7 @@ class ThreeFactorTrainer:
         scale = 1.0 / (B * a.sigma ** 2)
         estimated: dict = {}
 
-        loss_sum, correct, r_abs, units = 0.0, 0, 0.0, 0.0
+        loss_sum, correct, r_abs, r_sq, units = 0.0, 0, 0.0, 0.0, 0.0
         # Micro-batching: traces (x, xi) for every layer are alive only for one
         # micro-batch; the contracted estimate (parameter-sized) is accumulated.
         # Peak memory therefore scales with micro_batch_size, not batch_size.
@@ -285,14 +310,16 @@ class ThreeFactorTrainer:
 
             loss_sum += loss.sum().item()
             correct += (logits.argmax(1) == yb).sum().item()
-            r_abs += sum(r.abs().sum().item() for r in {id(r): r for r in rewards.values()}.values())
+            unique = {id(r): r for r in rewards.values()}.values()
+            r_abs += sum(r.abs().sum().item() for r in unique)
+            r_sq += sum(r.pow(2).sum().item() for r in unique)
         model.set_perturb(False)
 
         batch_loss = loss_sum / B
         if a.baseline == "ema":
             self.loss_ema = batch_loss if self.loss_ema is None else (
                 a.ema_decay * self.loss_ema + (1 - a.ema_decay) * batch_loss)
-        logs = {"train/loss": batch_loss, "train/acc": correct / B, "tf/abs_reward": r_abs / B,
+        logs = {"train/loss": batch_loss, "train/acc": correct / B, "tf/abs_reward": r_abs / B, "tf/reward_sq": r_sq / B,
                 "tf/perturbed_units": units}
         if self.loss_ema is not None:
             logs["tf/loss_baseline"] = self.loss_ema
@@ -303,6 +330,10 @@ class ThreeFactorTrainer:
         layers, logs = self.estimate(x, y, active)
         if group >= 0:
             logs["tf/active_group"] = group
+            score = math.sqrt(logs["tf/reward_sq"])
+            old = self.group_score[group]
+            d = self.args.adaptive_decay
+            self.group_score[group] = score if old is None else d * old + (1 - d) * score
 
         if self.args.clip_update > 0:
             total = math.sqrt(sum(m.weight_est.pow(2).sum().item() for m in layers))
@@ -313,11 +344,26 @@ class ThreeFactorTrainer:
                         m.bias_est.mul_(self.args.clip_update / total)
             logs["tf/estimate_norm"] = total
 
+        grads = None
         if measure_alignment:
-            logs.update(self.alignment(x, y, [m for m in layers if m in set(self.model.perturbed_layers())]))
+            grads = self.true_gradients(x, y)
+            logs.update(self.alignment(grads, [m for m in layers if m in grads]))
+            before = {m: m.weight.detach().clone() for m in grads}
 
         self.apply_update(layers)
         self.t += 1
+
+        if grads is not None:
+            # Alignment of the step actually taken (optimizer state, schedules and any
+            # mechanism acting on the update included), over *all* layers: does the
+            # whole network move down the true loss gradient?
+            dot, n1, n2 = 0.0, 0.0, 0.0
+            for m, g in grads.items():
+                d = (before[m] - m.weight.detach()).flatten()   # -dW
+                dot += (g * d).sum().item()
+                n1 += g.pow(2).sum().item()
+                n2 += d.pow(2).sum().item()
+            logs["align_update/full"] = dot / (math.sqrt(n1 * n2) + 1e-12)
         return logs
 
     @torch.no_grad()
@@ -339,27 +385,36 @@ class ThreeFactorTrainer:
             self.opt.step()
             self.opt.zero_grad(set_to_none=True)
 
-    def alignment(self, x, y, layers) -> dict:
-        """Cosine similarity between the estimate and the true gradient of the *global* loss.
-
-        Diagnostic only: uses autograd on the clean network, never used for learning.
-        Computed over the layers updated this step. In blockwise_reward mode the
-        estimate targets local losses, so this measures agreement with end-to-end backprop.
-        """
+    def true_gradients(self, x, y) -> dict:
+        """dL/dW of the *global* loss for every main-network layer, via autograd on the
+        clean network. Diagnostic only, never used for learning."""
         model = self.model
         model.zero_grad(set_to_none=True)
         with torch.enable_grad():
             F.cross_entropy(model(x), y).backward()
-        names = {m: n for n, m in model.named_perturbed_layers()}
+        grads = {m: m.weight.grad.flatten().clone() for m in model.perturbed_layers()}
+        model.zero_grad(set_to_none=True)
+        return grads
+
+    def alignment(self, grads, layers) -> dict:
+        """Cosine similarity between the estimate and the true global gradient.
+
+        ``align/total``: over the layers updated this step (in layerwise mode, the
+        active group). ``align/full``: over all layers, counting layers without an
+        estimate this step as zero. In blockwise_reward mode the estimate targets local
+        losses, so both measure agreement with end-to-end backprop.
+        """
+        names = {m: n for n, m in self.model.named_perturbed_layers()}
         logs, dot, n1, n2 = {}, 0.0, 0.0, 0.0
         for m in layers:
-            g, e = m.weight.grad.flatten(), m.weight_est.flatten()
+            g, e = grads[m], m.weight_est.flatten()
             logs[f"align/{names[m]}"] = F.cosine_similarity(g, e, dim=0).item()
             dot += (g * e).sum().item()
             n1 += g.pow(2).sum().item()
             n2 += e.pow(2).sum().item()
+        g_all = sum(g.pow(2).sum().item() for g in grads.values())
         logs["align/total"] = dot / (math.sqrt(n1 * n2) + 1e-12)
-        model.zero_grad(set_to_none=True)
+        logs["align/full"] = dot / (math.sqrt(g_all * n2) + 1e-12)
         return logs
 
 
@@ -448,8 +503,13 @@ def parse_args(argv=None):
                     help="per_sample: R_b per example; batch: one scalar R for the whole batch")
     tf.add_argument("--perturb-mode", default="all",
                     help=f"comma-separated subset of {', '.join(PERTURB_MODES)} (e.g. layerwise,topk)")
-    tf.add_argument("--layer-schedule", choices=["cycle", "random"], default="cycle",
-                    help="layerwise: round-robin over groups or a uniformly random group per step")
+    tf.add_argument("--layer-schedule", choices=["cycle", "random", "adaptive"], default="cycle",
+                    help="layerwise: round-robin, uniformly random, or adaptive (probability "
+                         "proportional to each group's recent local error sqrt(E[R^2]))")
+    tf.add_argument("--adaptive-eps", type=float, default=0.2,
+                    help="adaptive schedule: weight of the uniform floor in the group probabilities")
+    tf.add_argument("--adaptive-decay", type=float, default=0.9,
+                    help="adaptive schedule: EMA decay of each group's error score (per visit)")
     tf.add_argument("--topk-ratio", type=float, default=0.05, help="topk: fraction of units perturbed per layer")
     tf.add_argument("--topk-score", choices=["abs", "pos"], default="abs",
                     help="topk: rank units by |z| or by z (most ReLU-active)")
@@ -573,6 +633,8 @@ def main(argv=None):
     preempt = PreemptionHandler()
     model.train()
     done, val = False, None
+    history = {k: [] for k in ("train/loss",) + ALIGN_KEYS}
+    val_acc = []
     for epoch in range(start_epoch, args.epochs):
         t0 = time.time()
         for x, y in train_loader:
@@ -582,6 +644,12 @@ def main(argv=None):
             if log_now:
                 tracker.snapshot()
             logs = trainer.step(x, y, measure_alignment=align_now)
+            history["train/loss"].append(logs["train/loss"])
+            if align_now:
+                for k in ALIGN_KEYS:
+                    history[k].append(logs[k])
+                if not log_now:
+                    log({k: v for k, v in logs.items() if k.startswith("align")})
             if log_now:
                 logs.update(tracker.measure())
                 if device.type == "cuda":
@@ -612,15 +680,26 @@ def main(argv=None):
         log(val)
         print(f"== epoch {epoch}: val loss {val['val/loss']:.4f} val acc {val['val/acc']:.4f} "
               f"({val['time/epoch_s']:.0f}s)", flush=True)
+        val_acc.append(val["val/acc"])
         save_checkpoint(ckpt_path, model, opt, trainer, epoch, step, wandb_id)
         if done:
             break
 
+    # Run summary: final accuracy, per-epoch accuracy, alignment averaged over the run,
+    # and mean training loss over the run (area under the loss curve: lower = learns faster).
+    summary = {"final/val_acc": val["val/acc"] if val else None, "val_acc_per_epoch": val_acc,
+               "train_loss_auc": float(np.mean(history["train/loss"])) if history["train/loss"] else None,
+               "steps": step}
+    for k in ALIGN_KEYS:
+        if history[k]:
+            summary[f"{k}_mean"] = float(np.mean(history[k]))
     if run is not None:
-        if val is not None:
-            run.summary["final/val_acc"] = val["val/acc"]
+        for k, v in summary.items():
+            if not isinstance(v, list):
+                run.summary[k] = v
         run.finish()
-    return val
+    print("SUMMARY " + json.dumps(summary), flush=True)
+    return summary
 
 
 if __name__ == "__main__":
