@@ -29,6 +29,9 @@ BASES = {
     "cnn": "--model cnn --epochs 3 --optimizer adam --lr 3e-4 --perturb-mode topk,blockwise_reward",
     # CNN reference for layerwise-specific mechanisms
     "cnn-lw": "--model cnn --epochs 3 --optimizer adam --lr 3e-4 --perturb-mode layerwise",
+    # ResNet-18 reference for top-k mechanisms
+    "rn-lwtk": "--model resnet18 --epochs 1 --optimizer adam --lr 1e-4 --perturb-mode layerwise,topk "
+               "--micro-batch-size 64",
     # best ResNet-18 config so far
     "rn": "--model resnet18 --epochs 1 --optimizer adam --lr 1e-4 --perturb-mode layerwise --micro-batch-size 64",
 }
