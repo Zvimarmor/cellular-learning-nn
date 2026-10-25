@@ -81,7 +81,7 @@ units). Mechanisms help only if they put that probe where the signal is.
 | top-k | 93.9 | 42.5 | – | **25.3** |
 | local rewards | 91.2 | 35.4 | – | 18.3 |
 | top-k + local rewards | – | **44.9** | – | – |
-| layer-wise + top-k | – | 40.0 | – | 21.5 |
+| layer-wise + top-k | – | 39.9 | – | 21.5 |
 | layer-wise + top-k + local rewards | – | – | 22.4 | – |
 
 One-epoch rankings did not predict 50-epoch rankings on ResNet-18: there, top-k
