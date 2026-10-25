@@ -530,6 +530,9 @@ def parse_args(argv=None):
     io.add_argument("--no-download", action="store_true", help="fail instead of downloading datasets")
     io.add_argument("--log-every", type=int, default=50)
     io.add_argument("--run-name", default=None)
+    io.add_argument("--tag", default="",
+                    help="suffix for the derived run name and wandb group, to tell apart variants of "
+                         "the same method/modes (e.g. a schedule) and separate sweeps")
     io.add_argument("--wandb-project", default="three-factor-learning")
     io.add_argument("--wandb-entity", default=None)
     io.add_argument("--wandb-mode", choices=["online", "offline", "disabled"],
@@ -564,6 +567,8 @@ def parse_args(argv=None):
     if args.num_workers is None:
         args.num_workers = default_workers()
     tag = args.method if args.method == "backprop" else f"{args.method}-{mode_tag}"
+    if args.tag:
+        tag = f"{tag}-{args.tag}"
     if args.wandb_group is None:
         args.wandb_group = f"{args.dataset}-{args.model}-{tag}"
     if args.run_name is None:

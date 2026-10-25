@@ -1,0 +1,9 @@
+# ResNet-18 / CIFAR-10, 30 epochs: the kept mechanism (H1, adaptive layer scheduling) vs. its
+# round-robin reference, alone and on top of top-k, plus top-k alone (best ResNet-18 config in
+# the 50-epoch sweep, 25.3%). Same augmentation / lr / micro-batch as that sweep.
+#   GRID=slurm/grid_resnet_bio.txt SEEDS="0 1 2" TIME_LIMIT=02:00:00 ./slurm/launch_sweep.sh
+--dataset cifar10 --model resnet18 --epochs 30 --augment --method three_factor --optimizer adam --lr 1e-4 --micro-batch-size 64 --perturb-mode layerwise --layer-schedule cycle --tag cycle-bio30
+--dataset cifar10 --model resnet18 --epochs 30 --augment --method three_factor --optimizer adam --lr 1e-4 --micro-batch-size 64 --perturb-mode layerwise --layer-schedule adaptive --tag adaptive-bio30
+--dataset cifar10 --model resnet18 --epochs 30 --augment --method three_factor --optimizer adam --lr 1e-4 --micro-batch-size 64 --perturb-mode topk --tag bio30
+--dataset cifar10 --model resnet18 --epochs 30 --augment --method three_factor --optimizer adam --lr 1e-4 --micro-batch-size 64 --perturb-mode layerwise,topk --layer-schedule cycle --tag cycle-bio30
+--dataset cifar10 --model resnet18 --epochs 30 --augment --method three_factor --optimizer adam --lr 1e-4 --micro-batch-size 64 --perturb-mode layerwise,topk --layer-schedule adaptive --tag adaptive-bio30
